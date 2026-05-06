@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.Python
+build/
+dist/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env
+.env
+.env.local
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/

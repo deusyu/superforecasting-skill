@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ForecastCard",
+  "description": "Structured input for `sf render` to produce a markdown forecast card. Mirrors the 14-section output template defined in SKILL.md.",
+  "type": "object",
+  "required": [
+    "id",
+    "raw_question",
+    "canonical_question",
+    "settlement_criterion",
+    "outcome_type",
+    "resolution_date",
+    "current_probability",
+    "probability_range"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^sf-\\d{4}-\\d{3,}$" },
+    "raw_question": { "type": "string", "minLength": 1 },
+    "canonical_question": { "type": "string", "minLength": 1 },
+    "settlement_criterion": { "type": "string", "minLength": 1 },
+    "outcome_type": {
+      "type": "string",
+      "enum": ["binary", "multi_outcome", "numeric", "decision_bundle"]
+    },
+    "resolution_date": { "type": "string", "format": "date" },
+    "fermiized_subquestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["question"],
+        "properties": {
+          "question": { "type": "string" },
+          "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "reference_classes": {
+      "type": "object",
+      "properties": {
+        "broad": { "type": "string" },
+        "medium": { "type": "string" },
+        "narrow": { "type": "string" },
+        "primary": { "type": "string", "enum": ["broad", "medium", "narrow"] }
+      }
+    },
+    "base_rate": {
+      "type": "object",
+      "properties": {
+        "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidence": {
+          "type": "string",
+          "enum": ["low", "low_to_medium", "medium", "medium_to_high", "high"]
+        },
+        "reason": { "type": "string" }
+      }
+    },
+    "internal_adjustments": {
+      "type": "object",
+      "properties": {
+        "upward": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["factor", "impact"],
+            "properties": {
+              "factor": { "type": "string" },
+              "impact": { "type": "string" }
+            }
+          }
+        },
+        "downward": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["factor", "impact"],
+            "properties": {
+              "factor": { "type": "string" },
+              "impact": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "current_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+    "probability_range": {
+      "type": "array",
+      "items": { "type": "number", "minimum": 0, "maximum": 1 },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "why_this_might_be_wrong": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "update_triggers": {
+      "type": "object",
+      "properties": {
+        "upward": { "type": "array", "items": { "type": "string" } },
+        "downward": { "type": "array", "items": { "type": "string" } },
+        "next_review_date": { "type": "string", "format": "date" }
+      }
+    },
+    "decision_threshold": {
+      "type": "object",
+      "properties": {
+        "act_if_above": { "type": "number", "minimum": 0, "maximum": 1 },
+        "test_if_between": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "pause_if_below": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "settlement_plan": {
+      "type": "object",
+      "properties": {
+        "data_source": { "type": "string" },
+        "scoring_method": { "type": "string", "default": "Brier Score" }
+      }
+    }
+  }
+}
