@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ForecastEvent",
+  "description": "Single line in events.jsonl. Each event is a discriminated union on `type`.",
+  "type": "object",
+  "required": ["type", "id", "timestamp"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "forecast_created",
+        "question_scoped",
+        "decomposed",
+        "probability_set",
+        "evidence_update",
+        "settled",
+        "scored",
+        "reviewed"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^sf-\\d{4}-\\d{3,}$",
+      "description": "Forecast id, e.g. sf-2026-001"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of event creation"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": { "const": "forecast_created" },
+        "raw_question": { "type": "string", "minLength": 1 }
+      },
+      "required": ["raw_question"]
+    },
+    {
+      "properties": {
+        "type": { "const": "question_scoped" },
+        "canonical_question": { "type": "string", "minLength": 1 },
+        "outcome_type": {
+          "type": "string",
+          "enum": ["binary", "multi_outcome", "numeric", "decision_bundle"]
+        },
+        "resolution_date": { "type": "string", "format": "date" },
+        "settlement_criterion": { "type": "string", "minLength": 1 },
+        "data_source": { "type": "string" }
+      },
+      "required": ["canonical_question", "resolution_date", "settlement_criterion"]
+    },
+    {
+      "properties": {
+        "type": { "const": "decomposed" },
+        "subquestions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["question"],
+            "properties": {
+              "question": { "type": "string" },
+              "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      },
+      "required": ["subquestions"]
+    },
+    {
+      "properties": {
+        "type": { "const": "probability_set" },
+        "p": { "type": "number", "minimum": 0, "maximum": 1 },
+        "range": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "reason": { "type": "string" },
+        "reference_class": { "type": "string" },
+        "base_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["p", "range", "reason"]
+    },
+    {
+      "properties": {
+        "type": { "const": "evidence_update" },
+        "p_from": { "type": "number", "minimum": 0, "maximum": 1 },
+        "p_to": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "string", "minLength": 1 },
+        "direction": {
+          "type": "string",
+          "enum": ["upward", "downward", "neutral"]
+        },
+        "strength": {
+          "type": "string",
+          "enum": ["strong", "moderate", "weak"]
+        }
+      },
+      "required": ["p_from", "p_to", "evidence"]
+    },
+    {
+      "properties": {
+        "type": { "const": "settled" },
+        "outcome": { "type": "integer", "enum": [0, 1] },
+        "final_probability": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["outcome", "final_probability"]
+    },
+    {
+      "properties": {
+        "type": { "const": "scored" },
+        "brier": { "type": "number", "minimum": 0, "maximum": 1 },
+        "outcome": { "type": "integer", "enum": [0, 1] },
+        "final_probability": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["brier"]
+    },
+    {
+      "properties": {
+        "type": { "const": "reviewed" },
+        "scope": { "type": "string", "description": "e.g. 'recent 20', 'all', '2026-Q2'" },
+        "average_brier": { "type": "number", "minimum": 0, "maximum": 1 },
+        "calibration_notes": { "type": "array", "items": { "type": "string" } },
+        "resolution_notes": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["scope", "average_brier"]
+    }
+  ]
+}
