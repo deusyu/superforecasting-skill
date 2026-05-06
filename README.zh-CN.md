@@ -2,9 +2,11 @@
 
 [English](README.md) | 中文
 
-Claude Code / Codex skill，把模糊的"应该不应该"、"会不会成"、"焦虑"转化为可结算、可更新、可 Brier 评分的概率预测，并以判断账本的形式跨项目持续校准。
+我们日常焦虑的判断 — "应不应该"、"会不会成"、"概率有多大" — 大部分从来不会被结算。我们说一句模糊的话，世界继续展开，事后再用一个新的叙事把过去圆回来。判断从未真正被检验过，所以也从未真正进步过。
 
-> 受 Philip Tetlock 的《超级预测》和 Good Judgment Project 启发。书提供方法论（概率化、参考类、贝叶斯更新、Brier 评分）；本项目把方法论变成可强制执行的工作流 — 一个 LLM agent 带你走完八个 Gate，加一个确定性的 Python 引擎负责持久化状态、校验概率范围、强制状态机转移、长期评分。目标不是"AI 预测未来"，而是"AI 把你的预测流程工程化，最终判断权仍归人"。
+这个 skill 让判断变得**可结算**。它带你把每个焦虑改写为一个可结算的预测（明确事件、截止日期、判定标准）；用参考类而非个人故事来锚定概率；随证据更新；到期结算；长期 Brier 评分。账本是全局的 — 跨项目所有预测都落到同一个 `~/.superforecast/`，calibration 训练在真实结果上，而不是在记忆里。
+
+> **超级预测 = 概率化 + 可检验。** 受 Philip Tetlock 的《超级预测》和 Good Judgment Project 启发。书给出方法论（参考类、基础概率、贝叶斯更新、Brier 评分）；本项目把方法论变成可执行的流程。LLM agent 带你走完 8 个 Gate（可结算性、费米化、三层参考类、基础概率、内部视角调整、预测与决策分离 ……）；一个确定性的 Python 引擎用状态机堵住两种最常见的预测堕落形式：没截止日期的开放式预测、事后改口的合理化叙事。目标不是"AI 预测未来"，而是"AI 把你的预测流程工程化；判断权和决策责任归人"。
 
 ---
 
@@ -204,17 +206,15 @@ Gate 是决策树而非清单。每个 Gate 的输出喂给下一个：
 
 ## 常见问题
 
-| 问题 | 解决方案 |
+`sf.py` 的错误信息是自解释的 — 直接读即可。`illegal transition: state X, allowed sources [...]` 已经列出允许的源状态；`no current probability` 已经提示下一步是 `sf set-prob`。Coding agent（Claude Code / Codex）能直接读懂这些错误并修复，不需要额外的查询表。
+
+这里只列环境/安装/恢复类问题 — agent 单凭错误信息无法解决：
+
+| 场景 | 处理方式 |
 |------|----------|
-| `illegal transition: state X, allowed sources [...]` | 工作流跳了步。错误信息会列出允许的源状态 — 回退到那个状态。 |
-| `forecast not found: sf-YYYY-NNN` | 跑 `sf list` 查可用 id。Id 格式是 `sf-YYYY-NNN`。 |
-| `<id> has no current probability; run sf set-prob first` | 想 `update` 或 `settle` 一个从没 `set-prob` 过的预测。先设个初始概率。 |
-| `<id> has no probability set; cannot settle` | 同上。 |
-| `--outcome must be 0 or 1` | `settle` 只接二元结果。非二元预测请单独结算其下的二元主结算项。 |
-| `--range must take exactly 2 values: LOW HIGH` | 传两个空格分隔的浮点数：`--range 0.30 0.50`。 |
-| `invalid range: [0.5, 0.3]` | 下界必须 ≤ 上界。 |
-| Skill 在 Claude Code 中不自动触发 | 验证软链：`ls -L ~/.claude/skills/superforecast/SKILL.md`。用触发关键词（probability/forecast/should I/概率/应不应该）。 |
-| 账本丢了 | `events.jsonl` 是 source of truth。只要这一个文件还在，`active.json` 和渲染卡都能从它重生。备份只需要这一个文件。 |
+| Skill 在 Claude Code / Codex 中不自动触发 | 验证软链：`ls -L ~/.claude/skills/superforecast/SKILL.md`（或 `~/.codex/skills/...`）。如果文件不可达，runtime 根本没加载 skill — 重建软链。 |
+| 账本丢失或损坏 | `events.jsonl` 是唯一 source of truth。只要它还在，replay 即可重建 `active.json` 和渲染卡。如果 `events.jsonl` 也丢了 — 历史就没了，今后请只备份这一个文件。 |
+| `python3` 在 `sf.py` 上报语法错误 | 脚本要求 Python 3.10+（`__future__` annotations 中用了 `X \| Y` union 语法）。升级 Python 或用 `python3.10+` 解释器显式调用。 |
 
 ## 后续规划
 
