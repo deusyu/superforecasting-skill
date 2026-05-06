@@ -2,9 +2,11 @@
 
 English | [中文](README.zh-CN.md)
 
-Claude Code / Codex skill that turns vague concerns ("should I", "will it work out", "how likely") into resolvable, updatable, Brier-scored probabilistic forecasts — and persists them as a calibration ledger you can train against over time.
+Most of the judgments we worry about — "should I", "will it work out", "how likely" — never get tested. We say something vague, the world unfolds, we re-narrate the past to fit. Nothing about our judgment actually improves, because there was never a contract with reality in the first place.
 
-> Inspired by Philip Tetlock's *Superforecasting* and the Good Judgment Project. The book gives the methodology (probabilization, reference classes, Bayesian updating, Brier scoring); this project turns that methodology into an enforceable workflow — an LLM agent that walks you through the eight gates, plus a deterministic Python engine that persists state, validates probability ranges, enforces a state machine, and scores you over time. The goal is not "AI predicts the future" but "AI engineers your forecasting process so the human keeps judgment ownership."
+This skill makes judgment **testable**. It walks you through turning each concern into a resolvable forecast (specific event, deadline, settlement criterion), anchors a probability to a reference class instead of a personal story, updates it as evidence arrives, settles it when the deadline hits, and Brier-scores you over time. The ledger is global — every forecast across every project lands in `~/.superforecast/`, so your calibration trains on real outcomes, not on memory.
+
+> **Superforecasting = probabilization + testability.** Inspired by Philip Tetlock's *Superforecasting* and the Good Judgment Project. The book gives the methodology — reference classes, base rates, Bayesian updating, Brier scoring; this project makes the methodology executable. The LLM agent walks you through eight gates (resolvability, Fermi-ization, three-layer reference class, base rate, internal-view adjustments, forecast-vs-decision separation, ...). A deterministic Python engine enforces a state machine that blocks the two most common forecast-killers: predictions without deadlines, and after-the-fact reinterpretation. The goal is not "AI predicts the future" — it is "AI engineers your forecasting process; the human keeps judgment ownership and bears decision responsibility."
 
 ---
 
@@ -204,17 +206,15 @@ Full Brier interpretation, evidence-strength buckets, and review-writing guidanc
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| `illegal transition: state X, allowed sources [...]` | A workflow step was skipped. The error message names the allowed source states — backtrack to one of those. |
-| `forecast not found: sf-YYYY-NNN` | Run `sf list` to see available ids. The id format is `sf-YYYY-NNN`. |
-| `<id> has no current probability; run sf set-prob first` | Trying to `update` or `settle` a forecast that's never had `set-prob`. Set an initial probability first. |
-| `<id> has no probability set; cannot settle` | Same as above for `settle`. |
-| `--outcome must be 0 or 1` | `settle` only accepts binary outcomes. For non-binary forecasts, settle the binary main-resolution sub-forecast separately. |
-| `--range must take exactly 2 values: LOW HIGH` | Pass two space-separated floats: `--range 0.30 0.50`. |
-| `invalid range: [0.5, 0.3]` | Lower bound must be ≤ upper bound. |
-| Skill doesn't auto-trigger in Claude Code | Verify the symlink: `ls -L ~/.claude/skills/superforecast/SKILL.md`. Use one of the trigger keywords (probability/forecast/should I/概率/应不应该). |
-| Lost the ledger | `events.jsonl` is the source of truth. If you have it, `active.json` and rendered cards regenerate from it. Back up only this one file. |
+`sf.py` errors are self-explanatory — read them. If it says `illegal transition: state X, allowed sources [...]`, the message names the allowed states; if it says `no current probability`, the next command is `sf set-prob`. Coding agents (Claude Code / Codex) can debug these directly without lookup tables.
+
+What's worth listing here are the environment / install / recovery cases the agent can't resolve from the error alone:
+
+| Situation | What to do |
+|-----------|-----------|
+| Skill doesn't auto-trigger in Claude Code / Codex | Verify the symlink: `ls -L ~/.claude/skills/superforecast/SKILL.md` (or `~/.codex/skills/...`). If the file is unreachable, the runtime never loaded the skill. Re-create the symlink. |
+| Lost or corrupted ledger | `events.jsonl` is the only source of truth. If you have it, regenerate `active.json` and rendered cards by replaying events. If you lost `events.jsonl` too, the history is gone — back up that one file going forward. |
+| `python3` reports syntax errors on `sf.py` | The script requires Python 3.10+ (`X \| Y` union syntax in the `__future__` annotations). Upgrade Python or run with an explicit `python3.10+` interpreter. |
 
 ## Roadmap
 
