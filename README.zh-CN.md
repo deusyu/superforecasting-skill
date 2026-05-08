@@ -136,8 +136,6 @@ Gate 是决策树而非清单。每个 Gate 的输出喂给下一个：
 ```
 ∅ ──forecast_created──▶ DRAFT ──question_scoped──▶ SCOPED
                                                     │
-                                       decomposed（旁支，不改主状态）
-                                                    │
                                                     │ probability_set
                                                     ▼
                                                  ACTIVE ◀──┐
@@ -147,6 +145,15 @@ Gate 是决策树而非清单。每个 Gate 的输出喂给下一个：
                                                     │ settled
                                                     ▼
                                                  SETTLED ──scored（自动）──▶ SCORED
+
+旁支事件（不改主状态；SCOPED / ACTIVE / UPDATED 都可触发）：
+  decomposed              — Fermi 子问题
+  why_wrong_set           — 反面理由            （卡片第 10 段）
+  update_triggers_set     — 前瞻性更新触发器    （卡片第 11 段）
+  decision_threshold_set  — 行动 / 试探 / 暂停阈值（卡片第 12 段）
+
+聚合事件（独立 id 命名空间，由 `sf review` 写入）：
+  reviewed                — 校准快照，id = review-YYYY-NNN
 ```
 
 脚本强制三条工程约束：
@@ -199,7 +206,7 @@ Gate 是决策树而非清单。每个 Gate 的输出喂给下一个：
 | `references/superforecasting_concepts.md` | 术语和原理词表 |
 | `references/examples.md` | 6 个工作示例（生活/产品/商业/学习/更新/结算） |
 | `references/scoring.md` | Brier 解读、calibration 分档、证据强度 |
-| `schemas/forecast_event.schema.json` | `events.jsonl` 行格式（8 种事件，oneOf） |
+| `schemas/forecast_event.schema.json` | `events.jsonl` 行格式（oneOf 按 `type` 分支；事件类型清单以 schema 为准） |
 | `schemas/forecast_card.schema.json` | 渲染输入格式（14 段卡） |
 | `docs/skill_design.md` | 原始设计稿 |
 | `docs/concept_understanding.md` | 概念基础文档 |

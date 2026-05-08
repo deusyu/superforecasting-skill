@@ -2,6 +2,10 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ForecastEvent",
   "description": "Single line in events.jsonl. Each event is a discriminated union on `type`.",
+  "definitions": {
+    "forecastId": { "type": "string", "pattern": "^sf-\\d{4}-\\d{3,}$" },
+    "reviewId": { "type": "string", "pattern": "^review-\\d{4}-\\d{3,}$" }
+  },
   "type": "object",
   "required": ["type", "id", "timestamp"],
   "properties": {
@@ -13,6 +17,9 @@
         "decomposed",
         "probability_set",
         "evidence_update",
+        "why_wrong_set",
+        "update_triggers_set",
+        "decision_threshold_set",
         "settled",
         "scored",
         "reviewed"
@@ -20,8 +27,8 @@
     },
     "id": {
       "type": "string",
-      "pattern": "^sf-\\d{4}-\\d{3,}$",
-      "description": "Forecast id, e.g. sf-2026-001"
+      "pattern": "^(sf|review)-\\d{4}-\\d{3,}$",
+      "description": "Forecast id (e.g. sf-2026-001) or review id (e.g. review-2026-001)"
     },
     "timestamp": {
       "type": "string",
@@ -33,6 +40,7 @@
     {
       "properties": {
         "type": { "const": "forecast_created" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "raw_question": { "type": "string", "minLength": 1 }
       },
       "required": ["raw_question"]
@@ -40,6 +48,7 @@
     {
       "properties": {
         "type": { "const": "question_scoped" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "canonical_question": { "type": "string", "minLength": 1 },
         "outcome_type": {
           "type": "string",
@@ -47,13 +56,15 @@
         },
         "resolution_date": { "type": "string", "format": "date" },
         "settlement_criterion": { "type": "string", "minLength": 1 },
-        "data_source": { "type": "string" }
+        "data_source": { "type": "string" },
+        "scoring_method": { "type": "string" }
       },
       "required": ["canonical_question", "resolution_date", "settlement_criterion"]
     },
     {
       "properties": {
         "type": { "const": "decomposed" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "subquestions": {
           "type": "array",
           "minItems": 1,
@@ -72,6 +83,7 @@
     {
       "properties": {
         "type": { "const": "probability_set" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "p": { "type": "number", "minimum": 0, "maximum": 1 },
         "range": {
           "type": "array",
@@ -80,14 +92,70 @@
           "maxItems": 2
         },
         "reason": { "type": "string" },
-        "reference_class": { "type": "string" },
-        "base_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+        "reference_class": {
+          "type": "string",
+          "description": "convenience copy of reference_classes[primary]; legacy single-string field"
+        },
+        "reference_classes": {
+          "type": "object",
+          "properties": {
+            "broad": { "type": "string" },
+            "medium": { "type": "string" },
+            "narrow": { "type": "string" },
+            "primary": { "type": "string", "enum": ["broad", "medium", "narrow"] }
+          }
+        },
+        "base_rate": {
+          "oneOf": [
+            { "type": "number", "minimum": 0, "maximum": 1, "description": "legacy bare-number form" },
+            {
+              "type": "object",
+              "properties": {
+                "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+                "confidence": {
+                  "type": "string",
+                  "enum": ["low", "low_to_medium", "medium", "medium_to_high", "high"]
+                },
+                "reason": { "type": "string" }
+              },
+              "required": ["probability"]
+            }
+          ]
+        },
+        "internal_adjustments": {
+          "type": "object",
+          "properties": {
+            "upward": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["factor", "impact"],
+                "properties": {
+                  "factor": { "type": "string" },
+                  "impact": { "type": "string" }
+                }
+              }
+            },
+            "downward": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["factor", "impact"],
+                "properties": {
+                  "factor": { "type": "string" },
+                  "impact": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
       },
       "required": ["p", "range", "reason"]
     },
     {
       "properties": {
         "type": { "const": "evidence_update" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "p_from": { "type": "number", "minimum": 0, "maximum": 1 },
         "p_to": { "type": "number", "minimum": 0, "maximum": 1 },
         "evidence": { "type": "string", "minLength": 1 },
@@ -104,7 +172,56 @@
     },
     {
       "properties": {
+        "type": { "const": "why_wrong_set" },
+        "id": { "$ref": "#/definitions/forecastId" },
+        "why_this_might_be_wrong": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "required": ["why_this_might_be_wrong"]
+    },
+    {
+      "properties": {
+        "type": { "const": "update_triggers_set" },
+        "id": { "$ref": "#/definitions/forecastId" },
+        "update_triggers": {
+          "type": "object",
+          "properties": {
+            "upward": { "type": "array", "items": { "type": "string" } },
+            "downward": { "type": "array", "items": { "type": "string" } },
+            "next_review_date": { "type": "string", "format": "date" }
+          }
+        }
+      },
+      "required": ["update_triggers"]
+    },
+    {
+      "properties": {
+        "type": { "const": "decision_threshold_set" },
+        "id": { "$ref": "#/definitions/forecastId" },
+        "decision_threshold": {
+          "type": "object",
+          "properties": {
+            "act_if_above": { "type": "number", "minimum": 0, "maximum": 1 },
+            "test_if_between": {
+              "type": "array",
+              "items": { "type": "number", "minimum": 0, "maximum": 1 },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "pause_if_below": { "type": "number", "minimum": 0, "maximum": 1 },
+            "reason": { "type": "string" }
+          }
+        }
+      },
+      "required": ["decision_threshold"]
+    },
+    {
+      "properties": {
         "type": { "const": "settled" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "outcome": { "type": "integer", "enum": [0, 1] },
         "final_probability": { "type": "number", "minimum": 0, "maximum": 1 }
       },
@@ -113,6 +230,7 @@
     {
       "properties": {
         "type": { "const": "scored" },
+        "id": { "$ref": "#/definitions/forecastId" },
         "brier": { "type": "number", "minimum": 0, "maximum": 1 },
         "outcome": { "type": "integer", "enum": [0, 1] },
         "final_probability": { "type": "number", "minimum": 0, "maximum": 1 }
@@ -122,10 +240,20 @@
     {
       "properties": {
         "type": { "const": "reviewed" },
-        "scope": { "type": "string", "description": "e.g. 'recent 20', 'all', '2026-Q2'" },
+        "id": { "$ref": "#/definitions/reviewId" },
+        "scope": { "type": "string", "description": "e.g. 'recent 20', 'since 2026-01-01', 'all'" },
+        "forecast_count": { "type": "integer", "minimum": 0 },
         "average_brier": { "type": "number", "minimum": 0, "maximum": 1 },
         "calibration_notes": { "type": "array", "items": { "type": "string" } },
-        "resolution_notes": { "type": "array", "items": { "type": "string" } }
+        "resolution_notes": { "type": "array", "items": { "type": "string" } },
+        "scored_forecast_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^sf-\\d{4}-\\d{3,}$" }
+        },
+        "report_path": {
+          "type": "string",
+          "description": "basename only (e.g. 'calibration_20260506_001.md'); resolve under ~/.superforecast/reports/"
+        }
       },
       "required": ["scope", "average_brier"]
     }

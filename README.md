@@ -136,8 +136,6 @@ Full gate-by-gate operational detail in [`references/workflow.md`](references/wo
 ```
 ∅ ──forecast_created──▶ DRAFT ──question_scoped──▶ SCOPED
                                                     │
-                                       decomposed (side-branch, no state change)
-                                                    │
                                                     │ probability_set
                                                     ▼
                                                  ACTIVE ◀──┐
@@ -147,6 +145,15 @@ Full gate-by-gate operational detail in [`references/workflow.md`](references/wo
                                                     │ settled
                                                     ▼
                                                  SETTLED ──scored (auto)──▶ SCORED
+
+Side-branch events (no state change; allowed in SCOPED / ACTIVE / UPDATED):
+  decomposed              — Fermi sub-questions
+  why_wrong_set           — reverse-side reasons          (Card §10)
+  update_triggers_set     — forward-looking triggers      (Card §11)
+  decision_threshold_set  — act / test / pause thresholds (Card §12)
+
+Aggregate event (separate id namespace, written by `sf review`):
+  reviewed                — calibration snapshot, id = review-YYYY-NNN
 ```
 
 Three constraints the script enforces:
@@ -199,7 +206,7 @@ Full Brier interpretation, evidence-strength buckets, and review-writing guidanc
 | `references/superforecasting_concepts.md` | Terminology and principles glossary |
 | `references/examples.md` | Six worked cases (life, product, business, exam, update, settle) |
 | `references/scoring.md` | Brier interpretation, calibration bands, evidence-strength buckets |
-| `schemas/forecast_event.schema.json` | `events.jsonl` line format (8 event types, oneOf) |
+| `schemas/forecast_event.schema.json` | `events.jsonl` line format (oneOf discriminator on `type`; see schema for the canonical event-type list) |
 | `schemas/forecast_card.schema.json` | Render input format (14-section card) |
 | `docs/skill_design.md` | Original design rationale |
 | `docs/concept_understanding.md` | Conceptual foundation document |

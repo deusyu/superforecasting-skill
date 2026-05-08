@@ -12,7 +12,7 @@ superforecasting-skill is a Codex / Claude Code Skill that turns vague concerns,
 - `references/superforecasting_concepts.md` — Terminology and principles glossary
 - `references/examples.md` — Six worked cases (life decision, product, business risk, exam, update flow, settlement)
 - `references/scoring.md` — Brier interpretation, calibration bands, evidence-strength buckets
-- `schemas/forecast_event.schema.json` — `events.jsonl` line format (8 event types, oneOf discriminator on `type`)
+- `schemas/forecast_event.schema.json` — `events.jsonl` line format (oneOf discriminator on `type`; see the schema for the canonical event-type list)
 - `schemas/forecast_card.schema.json` — `sf render` input format (14-section card)
 - `docs/skill_design.md` — Original design rationale (background reading, Chinese)
 - `docs/concept_understanding.md` — Conceptual foundation (background reading, Chinese)
@@ -36,7 +36,7 @@ python3 $SF list
 python3 $SF review --recent 1
 ```
 
-Verify: state machine accepts the legal sequence, rejects illegal transitions, Brier computed correctly (`(0.65 - 1)² = 0.1225`), markdown card renders to `~/.superforecast/forecasts/rendered/<id>.md`, calibration report written to `~/.superforecast/reports/calibration_YYYYMMDD.md`.
+Verify: state machine accepts the legal sequence, rejects illegal transitions, Brier computed correctly (`(0.65 - 1)² = 0.1225`), markdown card renders to `~/.superforecast/forecasts/rendered/<id>.md`, calibration report written to `~/.superforecast/reports/calibration_YYYYMMDD_NNN.md` (NNN auto-increments per day).
 
 To clean test data afterward, edit `~/.superforecast/forecasts/events.jsonl` and `active.json` directly, or rebuild from scratch:
 
