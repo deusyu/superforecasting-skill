@@ -33,12 +33,17 @@ STATE_SETTLED = "SETTLED"
 STATE_SCORED = "SCORED"
 STATE_REVIEWED = "REVIEWED"
 
+SIDE_BRANCH_STATES = [STATE_SCOPED, STATE_ACTIVE, STATE_UPDATED]
+
 TRANSITIONS = {
     "forecast_created": {"from": [None], "to": STATE_DRAFT},
     "question_scoped": {"from": [STATE_DRAFT, STATE_SCOPED], "to": STATE_SCOPED},
-    "decomposed": {"from": [STATE_SCOPED, STATE_ACTIVE, STATE_UPDATED], "to": None},
-    "probability_set": {"from": [STATE_SCOPED, STATE_ACTIVE, STATE_UPDATED], "to": STATE_ACTIVE},
+    "decomposed": {"from": SIDE_BRANCH_STATES, "to": None},
+    "probability_set": {"from": SIDE_BRANCH_STATES, "to": STATE_ACTIVE},
     "evidence_update": {"from": [STATE_ACTIVE, STATE_UPDATED], "to": STATE_UPDATED},
+    "why_wrong_set": {"from": SIDE_BRANCH_STATES, "to": None},
+    "update_triggers_set": {"from": SIDE_BRANCH_STATES, "to": None},
+    "decision_threshold_set": {"from": SIDE_BRANCH_STATES, "to": None},
     "settled": {"from": [STATE_ACTIVE, STATE_UPDATED], "to": STATE_SETTLED},
     "scored": {"from": [STATE_SETTLED, STATE_SCORED], "to": STATE_SCORED},
 }
@@ -98,6 +103,12 @@ def validate_id(forecast_id: str) -> None:
         die(f"invalid forecast id: {forecast_id!r}. Expected format sf-YYYY-NNN")
 
 
+def validate_any_id(some_id: str) -> None:
+    """Accept both forecast ids (sf-*) and review ids (review-*)."""
+    if not re.match(r"^(sf|review)-\d{4}-\d{3,}$", some_id):
+        die(f"invalid id: {some_id!r}. Expected sf-YYYY-NNN or review-YYYY-NNN")
+
+
 def validate_date(date_str: str, field: str = "date") -> None:
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
@@ -117,18 +128,37 @@ def validate_range(low: float, high: float) -> None:
         die(f"invalid range: [{low}, {high}]. Lower bound must be <= upper bound.")
 
 
+def validate_p_in_range(p: float, low: float, high: float, p_field: str = "p") -> None:
+    if not (low <= p <= high):
+        die(
+            f"incoherent {p_field}={p} for range [{low}, {high}]: {p_field} must lie inside the range. "
+            f"Either widen --range, or correct --{p_field}."
+        )
+
+
+def _max_suffix(ids: list, prefix: str) -> int:
+    """Return max numeric suffix among ids matching '<prefix>NNN'; 0 if none."""
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+    best = 0
+    for s in ids:
+        m = pattern.match(s)
+        if m:
+            best = max(best, int(m.group(1)))
+    return best
+
+
 def next_id() -> str:
     year = datetime.now().year
     prefix = f"sf-{year}-"
-    seen = set()
-    for fid in load_active().keys():
-        if fid.startswith(prefix):
-            seen.add(fid)
-    for ev in load_events():
-        fid = ev.get("id", "")
-        if fid.startswith(prefix):
-            seen.add(fid)
-    return f"{prefix}{len(seen) + 1:03d}"
+    candidates = list(load_active().keys()) + [ev.get("id", "") for ev in load_events()]
+    return f"{prefix}{_max_suffix(candidates, prefix) + 1:03d}"
+
+
+def next_review_id() -> str:
+    year = datetime.now().year
+    prefix = f"review-{year}-"
+    candidates = [ev.get("id", "") for ev in load_events()]
+    return f"{prefix}{_max_suffix(candidates, prefix) + 1:03d}"
 
 
 def get_forecast(forecast_id: str) -> dict:
@@ -184,9 +214,18 @@ def cmd_new(args) -> None:
     print(forecast_id)
 
 
+DEFAULT_SCORING_METHOD = {
+    "binary": "Brier Score",
+    "numeric": "manual numeric scoring",
+    "multi_outcome": "manual multi-class scoring",
+    "decision_bundle": "settle supporting binary forecasts individually",
+}
+
+
 def cmd_scope(args) -> None:
     validate_id(args.id)
     validate_date(args.resolution_date, "resolution-date")
+    scoring_method = args.scoring_method or DEFAULT_SCORING_METHOD.get(args.outcome_type, "—")
     transition(args.id, "question_scoped")
     event = {
         "type": "question_scoped",
@@ -196,6 +235,7 @@ def cmd_scope(args) -> None:
         "outcome_type": args.outcome_type,
         "resolution_date": args.resolution_date,
         "settlement_criterion": args.criterion,
+        "scoring_method": scoring_method,
     }
     if args.data_source:
         event["data_source"] = args.data_source
@@ -207,6 +247,7 @@ def cmd_scope(args) -> None:
         resolution_date=args.resolution_date,
         settlement_criterion=args.criterion,
         data_source=args.data_source,
+        scoring_method=scoring_method,
     )
     print(f"scoped {args.id}: {args.canonical} (resolves {args.resolution_date})")
 
@@ -238,6 +279,19 @@ def cmd_decompose(args) -> None:
     print(f"decomposed {args.id} into {len(subs)} sub-questions")
 
 
+def parse_factor_impact(items: list | None, flag: str) -> list:
+    """Parse repeatable 'factor|impact' strings into structured entries."""
+    if not items:
+        return []
+    out = []
+    for raw in items:
+        parts = raw.rsplit("|", 1)
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            die(f"--{flag} expects 'factor|impact' (e.g. '--{flag} \"strong demand|+5% to +10%\"'), got: {raw!r}")
+        out.append({"factor": parts[0].strip(), "impact": parts[1].strip()})
+    return out
+
+
 def cmd_set_prob(args) -> None:
     validate_id(args.id)
     validate_probability(args.p, "p")
@@ -245,6 +299,52 @@ def cmd_set_prob(args) -> None:
         die("--range must take exactly 2 values: LOW HIGH")
     low, high = args.range
     validate_range(low, high)
+    validate_p_in_range(args.p, low, high)
+
+    any_ref_input = any([args.ref_broad, args.ref_medium, args.ref_narrow, args.reference_class])
+    if args.ref_primary and not any_ref_input:
+        die(
+            "--ref-primary requires at least one of --ref-broad / --ref-medium / --ref-narrow "
+            "(or legacy --reference-class). Otherwise the primary points to nothing."
+        )
+
+    reference_classes = {}
+    if args.ref_broad:
+        reference_classes["broad"] = args.ref_broad
+    if args.ref_medium:
+        reference_classes["medium"] = args.ref_medium
+    if args.ref_narrow:
+        reference_classes["narrow"] = args.ref_narrow
+    if args.reference_class and "medium" not in reference_classes:
+        reference_classes["medium"] = args.reference_class
+    if reference_classes:
+        primary = args.ref_primary or ("medium" if "medium" in reference_classes else next(iter(reference_classes)))
+        if primary not in reference_classes:
+            die(f"--ref-primary={primary!r} but no --ref-{primary} was provided")
+        reference_classes["primary"] = primary
+
+    if (args.base_rate_confidence or args.base_rate_reason) and args.base_rate is None:
+        die(
+            "--base-rate-confidence and --base-rate-reason require --base-rate. "
+            "Provide a numeric base rate or drop the metadata flags."
+        )
+    base_rate_obj = None
+    if args.base_rate is not None:
+        validate_probability(args.base_rate, "base-rate")
+        base_rate_obj = {"probability": args.base_rate}
+        if args.base_rate_confidence:
+            base_rate_obj["confidence"] = args.base_rate_confidence
+        if args.base_rate_reason:
+            base_rate_obj["reason"] = args.base_rate_reason
+
+    upward = parse_factor_impact(args.up, "up")
+    downward = parse_factor_impact(args.down, "down")
+    internal_adjustments = {}
+    if upward:
+        internal_adjustments["upward"] = upward
+    if downward:
+        internal_adjustments["downward"] = downward
+
     transition(args.id, "probability_set")
     event = {
         "type": "probability_set",
@@ -254,19 +354,27 @@ def cmd_set_prob(args) -> None:
         "range": [low, high],
         "reason": args.reason,
     }
-    if args.reference_class:
-        event["reference_class"] = args.reference_class
-    if args.base_rate is not None:
-        validate_probability(args.base_rate, "base-rate")
-        event["base_rate"] = args.base_rate
+    if reference_classes:
+        event["reference_classes"] = reference_classes
+        event["reference_class"] = reference_classes.get(reference_classes["primary"])
+    if base_rate_obj:
+        event["base_rate"] = base_rate_obj
+    if internal_adjustments:
+        event["internal_adjustments"] = internal_adjustments
     append_event(event)
-    update_active(
-        args.id, "probability_set",
-        current_probability=args.p,
-        probability_range=[low, high],
-        reference_class=args.reference_class,
-        base_rate=args.base_rate,
-    )
+
+    fields = {
+        "current_probability": args.p,
+        "probability_range": [low, high],
+    }
+    if reference_classes:
+        fields["reference_classes"] = reference_classes
+        fields["reference_class"] = reference_classes.get(reference_classes["primary"])
+    if base_rate_obj:
+        fields["base_rate"] = base_rate_obj
+    if internal_adjustments:
+        fields["internal_adjustments"] = internal_adjustments
+    update_active(args.id, "probability_set", **fields)
     print(f"{args.id}: p = {args.p} (range {low}–{high})")
 
 
@@ -282,6 +390,7 @@ def cmd_update(args) -> None:
         if len(args.range) != 2:
             die("--range must take exactly 2 values: LOW HIGH")
         validate_range(args.range[0], args.range[1])
+        validate_p_in_range(args.p, args.range[0], args.range[1])
         new_range = [args.range[0], args.range[1]]
     if args.p > p_from:
         direction = "upward"
@@ -310,11 +419,124 @@ def cmd_update(args) -> None:
     print(f"{args.id}: p {p_from} → {args.p} ({direction})")
 
 
+def cmd_why_wrong(args) -> None:
+    validate_id(args.id)
+    if not args.reason:
+        die("at least one --reason required")
+    reasons = [r.strip() for r in args.reason if r.strip()]
+    if not reasons:
+        die("--reason values must be non-empty")
+    transition(args.id, "why_wrong_set")
+    append_event({
+        "type": "why_wrong_set",
+        "id": args.id,
+        "timestamp": now_iso(),
+        "why_this_might_be_wrong": reasons,
+    })
+    update_active(args.id, "why_wrong_set", why_this_might_be_wrong=reasons)
+    print(f"{args.id}: recorded {len(reasons)} reverse-side reason(s)")
+
+
+def cmd_triggers(args) -> None:
+    validate_id(args.id)
+    upward = [t.strip() for t in (args.up or []) if t.strip()]
+    downward = [t.strip() for t in (args.down or []) if t.strip()]
+    if not upward and not downward and not args.next_review:
+        die("provide at least one of --up, --down, or --next-review")
+    triggers = {}
+    if upward:
+        triggers["upward"] = upward
+    if downward:
+        triggers["downward"] = downward
+    if args.next_review:
+        validate_date(args.next_review, "next-review")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if args.next_review < today:
+            die(f"--next-review={args.next_review} is in the past (today UTC: {today}).")
+        snapshot = load_active().get(args.id, {})
+        resolution = snapshot.get("resolution_date")
+        if resolution and args.next_review > resolution:
+            die(
+                f"--next-review={args.next_review} is after resolution_date={resolution}; "
+                f"by then the forecast should be settled, not reviewed."
+            )
+        triggers["next_review_date"] = args.next_review
+    transition(args.id, "update_triggers_set")
+    append_event({
+        "type": "update_triggers_set",
+        "id": args.id,
+        "timestamp": now_iso(),
+        "update_triggers": triggers,
+    })
+    update_active(args.id, "update_triggers_set", update_triggers=triggers)
+    desc = []
+    if upward:
+        desc.append(f"{len(upward)} upward")
+    if downward:
+        desc.append(f"{len(downward)} downward")
+    if args.next_review:
+        desc.append(f"next review {args.next_review}")
+    print(f"{args.id}: triggers — {', '.join(desc)}")
+
+
+def cmd_decision(args) -> None:
+    validate_id(args.id)
+    threshold = {}
+    if args.act_above is not None:
+        validate_probability(args.act_above, "act-above")
+        threshold["act_if_above"] = args.act_above
+    if args.test_between is not None:
+        if len(args.test_between) != 2:
+            die("--test-between must take exactly 2 values: LOW HIGH")
+        validate_range(args.test_between[0], args.test_between[1])
+        threshold["test_if_between"] = list(args.test_between)
+    if args.pause_below is not None:
+        validate_probability(args.pause_below, "pause-below")
+        threshold["pause_if_below"] = args.pause_below
+    if not threshold:
+        die("provide at least one of --act-above, --test-between, --pause-below")
+
+    anchors = []
+    if "pause_if_below" in threshold:
+        anchors.append(("pause_if_below", threshold["pause_if_below"]))
+    if "test_if_between" in threshold:
+        low, high = threshold["test_if_between"]
+        anchors.append(("test_if_between[0]", low))
+        anchors.append(("test_if_between[1]", high))
+    if "act_if_above" in threshold:
+        anchors.append(("act_if_above", threshold["act_if_above"]))
+    for (name_a, val_a), (name_b, val_b) in zip(anchors, anchors[1:]):
+        if val_a > val_b:
+            die(
+                f"decision thresholds overlap: {name_a}={val_a} must be <= {name_b}={val_b}. "
+                f"Required ordering: pause_if_below <= test_if_between[0] <= test_if_between[1] <= act_if_above."
+            )
+
+    if args.reason:
+        threshold["reason"] = args.reason
+    transition(args.id, "decision_threshold_set")
+    append_event({
+        "type": "decision_threshold_set",
+        "id": args.id,
+        "timestamp": now_iso(),
+        "decision_threshold": threshold,
+    })
+    update_active(args.id, "decision_threshold_set", decision_threshold=threshold)
+    print(f"{args.id}: decision threshold recorded")
+
+
 def cmd_settle(args) -> None:
     validate_id(args.id)
     if args.outcome not in (0, 1):
         die("--outcome must be 0 or 1")
     snapshot = transition(args.id, "settled")
+    outcome_type = snapshot.get("outcome_type", "binary")
+    if outcome_type != "binary":
+        die(
+            f"{args.id} has outcome_type={outcome_type!r}; `sf settle` only auto-scores binary forecasts. "
+            f"For multi_outcome / numeric / decision_bundle, score manually per references/scoring.md "
+            f"('When to NOT compute Brier'). Decision bundles should be split into binary sub-forecasts."
+        )
     final_p = snapshot.get("current_probability")
     if final_p is None:
         die(f"{args.id} has no probability set; cannot settle")
@@ -388,9 +610,6 @@ def render_card(snapshot: dict, events: list) -> str:
 
     lines.append("## 3. Settlement Criterion")
     lines.append(snapshot.get("settlement_criterion") or "—")
-    if snapshot.get("data_source"):
-        lines.append("")
-        lines.append(f"*Data source: {snapshot['data_source']}*")
     lines.append("")
 
     lines.append("## 4. Forecast Type")
@@ -408,16 +627,59 @@ def render_card(snapshot: dict, events: list) -> str:
         lines.append("_(none)_")
     lines.append("")
 
-    lines.append("## 6. Reference Class")
-    lines.append(snapshot.get("reference_class") or "_(not recorded)_")
+    lines.append("## 6. Reference Class (broad / medium / narrow + primary)")
+    rc = snapshot.get("reference_classes")
+    if isinstance(rc, dict) and any(k in rc for k in ("broad", "medium", "narrow")):
+        primary = rc.get("primary")
+        for layer in ("broad", "medium", "narrow"):
+            text = rc.get(layer)
+            marker = " ← primary" if layer == primary else ""
+            lines.append(f"- **{layer}**: {text or '_(not recorded)_'}{marker}")
+    elif snapshot.get("reference_class"):
+        lines.append(f"- **medium**: {snapshot['reference_class']} ← primary")
+        lines.append("- **broad**: _(not recorded)_")
+        lines.append("- **narrow**: _(not recorded)_")
+    else:
+        lines.append("_(not recorded)_")
     lines.append("")
 
     lines.append("## 7. Base Rate")
     br = snapshot.get("base_rate")
-    lines.append(str(br) if br is not None else "_(not recorded)_")
+    if isinstance(br, dict):
+        lines.append(f"- **Probability**: {br.get('probability', '—')}")
+        if br.get("confidence"):
+            lines.append(f"- **Confidence**: {br['confidence']}")
+        if br.get("reason"):
+            lines.append(f"- **Reason**: {br['reason']}")
+    elif br is not None:
+        lines.append(str(br))
+    else:
+        lines.append("_(not recorded)_")
     lines.append("")
 
-    lines.append("## 8. Current Probability")
+    lines.append("## 8. Internal Adjustments (upward / downward with impact bands)")
+    adj = snapshot.get("internal_adjustments") or {}
+    upward = adj.get("upward") or []
+    downward = adj.get("downward") or []
+    if upward or downward:
+        lines.append("**Upward**")
+        if upward:
+            for u in upward:
+                lines.append(f"- {u['factor']} ({u['impact']})")
+        else:
+            lines.append("- _(none)_")
+        lines.append("")
+        lines.append("**Downward**")
+        if downward:
+            for d in downward:
+                lines.append(f"- {d['factor']} ({d['impact']})")
+        else:
+            lines.append("- _(none)_")
+    else:
+        lines.append("_(not recorded)_")
+    lines.append("")
+
+    lines.append("## 9. Current Probability + Probability Range")
     p = snapshot.get("current_probability")
     rng = snapshot.get("probability_range")
     if p is not None:
@@ -432,29 +694,81 @@ def render_card(snapshot: dict, events: list) -> str:
         lines.append("_(not estimated)_")
     lines.append("")
 
-    lines.append("## 9. Evidence Updates")
+    lines.append("## 10. Why This Forecast Might Be Wrong")
+    why = snapshot.get("why_this_might_be_wrong") or []
+    if why:
+        for r in why:
+            lines.append(f"- {r}")
+    else:
+        lines.append("_(not recorded)_")
+    lines.append("")
+
+    lines.append("## 11. Update Triggers (upward / downward / next review date)")
+    trig = snapshot.get("update_triggers") or {}
+    trig_up = trig.get("upward") or []
+    trig_down = trig.get("downward") or []
+    next_review = trig.get("next_review_date")
+    if trig_up or trig_down or next_review:
+        if trig_up:
+            lines.append("**Upward triggers**")
+            for t in trig_up:
+                lines.append(f"- {t}")
+        if trig_down:
+            lines.append("**Downward triggers**")
+            for t in trig_down:
+                lines.append(f"- {t}")
+        if next_review:
+            lines.append(f"**Next review**: {next_review}")
+    else:
+        lines.append("_(not recorded)_")
+    lines.append("")
+
+    lines.append("## 12. Decision Threshold")
+    dt = snapshot.get("decision_threshold") or {}
+    if dt:
+        if dt.get("act_if_above") is not None:
+            lines.append(f"- **act_if_above**: {dt['act_if_above']}")
+        tib = dt.get("test_if_between")
+        if tib:
+            lines.append(f"- **test_if_between**: [{tib[0]}, {tib[1]}]")
+        if dt.get("pause_if_below") is not None:
+            lines.append(f"- **pause_if_below**: {dt['pause_if_below']}")
+        if dt.get("reason"):
+            lines.append(f"- **reason**: {dt['reason']}")
+    else:
+        lines.append("_(not decision-shaped, or thresholds not recorded)_")
+    lines.append("")
+
+    lines.append("## 13. Settlement & Scoring Plan")
+    lines.append(f"- **Data source**: {snapshot.get('data_source') or '—'}")
+    lines.append(f"- **Scoring method**: {snapshot.get('scoring_method') or '—'}")
+    lines.append(f"- **Resolution date**: {snapshot.get('resolution_date', '—')}")
+    if snapshot.get("outcome") is not None:
+        lines.append("")
+        lines.append("**Settled**:")
+        lines.append(f"- Outcome: **{snapshot['outcome']}**")
+        lines.append(f"- Final probability: {snapshot.get('final_probability')}")
+        if snapshot.get("brier") is not None:
+            lines.append(f"- Brier Score: **{snapshot['brier']}**")
+        lines.append(f"- Settled at: {snapshot.get('settled_at')}")
+    else:
+        lines.append("")
+        lines.append("_(not yet settled)_")
+    lines.append("")
+
+    lines.append("## 14. Ledger Event")
+    lines.append(f"- **Forecast id**: `{fid}`")
     updates = [e for e in events if e["type"] == "evidence_update"]
     if updates:
+        lines.append("")
+        lines.append("**Evidence-update timeline**")
         for ev in updates:
             lines.append(
                 f"- {ev['timestamp'][:10]}: {ev['p_from']} → {ev['p_to']} "
                 f"({ev.get('direction', 'neutral')}) — {ev['evidence']}"
             )
-    else:
-        lines.append("_(no updates)_")
     lines.append("")
-
-    lines.append("## 10. Settlement & Scoring")
-    if snapshot.get("outcome") is not None:
-        lines.append(f"- Outcome: **{snapshot['outcome']}**")
-        lines.append(f"- Final probability: {snapshot.get('final_probability')}")
-        lines.append(f"- Brier Score: **{snapshot.get('brier')}**")
-        lines.append(f"- Settled at: {snapshot.get('settled_at')}")
-    else:
-        lines.append("_(not settled)_")
-    lines.append("")
-
-    lines.append("## 11. Event Log")
+    lines.append("**Full event log**")
     lines.append("```")
     for ev in events:
         lines.append(json.dumps(ev, ensure_ascii=False))
@@ -540,10 +854,34 @@ def cmd_review(args) -> None:
             f"outcome={ev['outcome']} · Brier={ev['brier']}"
         )
 
-    out_path = REPORTS_DIR / f"calibration_{timestamp[:10].replace('-', '')}.md"
+    date_stamp = timestamp[:10].replace("-", "")
+    suffix_re = re.compile(rf"^calibration_{date_stamp}_(\d+)\.md$")
+    max_suffix = 0
+    for p in REPORTS_DIR.glob(f"calibration_{date_stamp}_*.md"):
+        m = suffix_re.match(p.name)
+        if m:
+            max_suffix = max(max_suffix, int(m.group(1)))
+    report_name = f"calibration_{date_stamp}_{max_suffix + 1:03d}.md"
+    out_path = REPORTS_DIR / report_name
     out_path.write_text("\n".join(report_lines) + "\n")
+
+    review_id = next_review_id()
+    append_event({
+        "type": "reviewed",
+        "id": review_id,
+        "timestamp": timestamp,
+        "scope": scope_str,
+        "forecast_count": n,
+        "average_brier": round(avg_brier, 6),
+        "calibration_notes": [ln.lstrip("- ").strip() for ln in calibration_lines],
+        "resolution_notes": [ln.lstrip("- ").strip() for ln in resolution_lines],
+        "scored_forecast_ids": [ev["id"] for ev in scored_events],
+        "report_path": report_name,
+    })
+
     print(f"wrote {out_path}")
     print(f"average Brier: {avg_brier:.4f} over {n} forecasts")
+    print(f"recorded {review_id}")
 
 
 def cmd_list(args) -> None:
@@ -567,9 +905,11 @@ def cmd_list(args) -> None:
 
 
 def cmd_show(args) -> None:
-    validate_id(args.id)
-    snapshot = get_forecast(args.id)
+    validate_any_id(args.id)
     events = [e for e in load_events() if e.get("id") == args.id]
+    snapshot = load_active().get(args.id, {})
+    if not snapshot and not events:
+        die(f"id not found: {args.id}. Run `sf list` for forecasts or grep events.jsonl for reviews.")
     print(json.dumps({"snapshot": snapshot, "events": events}, ensure_ascii=False, indent=2))
 
 
@@ -599,6 +939,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["binary", "multi_outcome", "numeric", "decision_bundle"],
     )
     sp.add_argument("--data-source", default=None)
+    sp.add_argument(
+        "--scoring-method", default=None,
+        help=(
+            "scoring method recorded in the card; defaults derive from --outcome-type "
+            "(binary→'Brier Score'; numeric→'manual numeric scoring'; "
+            "multi_outcome→'manual multi-class scoring'; "
+            "decision_bundle→'settle supporting binary forecasts individually')"
+        ),
+    )
     sp.set_defaults(fn=cmd_scope)
 
     sp = sub.add_parser("decompose", help="record Fermi-ized sub-questions")
@@ -614,8 +963,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--p", type=float, required=True)
     sp.add_argument("--range", type=float, nargs=2, required=True, metavar=("LOW", "HIGH"))
     sp.add_argument("--reason", required=True)
-    sp.add_argument("--reference-class", default=None)
+    sp.add_argument("--reference-class", default=None,
+                    help="legacy single reference class; treated as --ref-medium if provided")
+    sp.add_argument("--ref-broad", default=None)
+    sp.add_argument("--ref-medium", default=None)
+    sp.add_argument("--ref-narrow", default=None)
+    sp.add_argument("--ref-primary", choices=["broad", "medium", "narrow"], default=None)
     sp.add_argument("--base-rate", type=float, default=None)
+    sp.add_argument(
+        "--base-rate-confidence",
+        choices=["low", "low_to_medium", "medium", "medium_to_high", "high"],
+        default=None,
+    )
+    sp.add_argument("--base-rate-reason", default=None)
+    sp.add_argument(
+        "--up", action="append", default=None,
+        help="repeatable upward adjustment 'factor|impact', e.g. 'strong demand|+5pp to +10pp'",
+    )
+    sp.add_argument(
+        "--down", action="append", default=None,
+        help="repeatable downward adjustment 'factor|impact', e.g. 'tight budget|-5pp to -10pp'",
+    )
     sp.set_defaults(fn=cmd_set_prob)
 
     sp = sub.add_parser("update", help="update probability with new evidence")
@@ -626,6 +994,35 @@ def build_parser() -> argparse.ArgumentParser:
                     help="optionally widen/narrow the probability range alongside the update")
     sp.add_argument("--strength", choices=["strong", "moderate", "weak"], default=None)
     sp.set_defaults(fn=cmd_update)
+
+    sp = sub.add_parser("why-wrong", help="record reverse-side reasons (Card section 10)")
+    sp.add_argument("id")
+    sp.add_argument(
+        "--reason", "-r", action="append", required=True,
+        help="repeatable; one short reason per flag (e.g. -r 'reference class is too narrow')",
+    )
+    sp.set_defaults(fn=cmd_why_wrong)
+
+    sp = sub.add_parser("triggers", help="record forward-looking update triggers (Card section 11)")
+    sp.add_argument("id")
+    sp.add_argument(
+        "--up", action="append", default=None,
+        help="repeatable upward trigger (what would push p higher)",
+    )
+    sp.add_argument(
+        "--down", action="append", default=None,
+        help="repeatable downward trigger (what would push p lower)",
+    )
+    sp.add_argument("--next-review", default=None, help="YYYY-MM-DD")
+    sp.set_defaults(fn=cmd_triggers)
+
+    sp = sub.add_parser("decision", help="record decision thresholds (Card section 12)")
+    sp.add_argument("id")
+    sp.add_argument("--act-above", type=float, default=None)
+    sp.add_argument("--test-between", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"))
+    sp.add_argument("--pause-below", type=float, default=None)
+    sp.add_argument("--reason", default=None, help="why these thresholds (cost/reversibility)")
+    sp.set_defaults(fn=cmd_decision)
 
     sp = sub.add_parser("settle", help="settle a binary forecast and score it")
     sp.add_argument("id")

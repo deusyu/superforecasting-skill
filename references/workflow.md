@@ -22,10 +22,13 @@ Required outputs:
 3. Run `python scripts/sf.py new "<raw question>"` to allocate an id.
 4. Run `sf scope <id> --canonical "..." --resolution-date YYYY-MM-DD --criterion "..."`.
 5. (Optional) `sf decompose <id> -s "subq1|0.65" -s "subq2|0.7"` if Fermi-ized.
-6. `sf set-prob <id> --p 0.62 --range 0.55 0.68 --reason "..."`.
-7. `sf render <id>` to produce the markdown card.
-8. Read the rendered card path back to the user and ask if anything should be
-   adjusted before activating.
+6. `sf set-prob <id> --p 0.62 --range 0.55 0.68 --ref-broad "..." --ref-medium "..." --ref-narrow "..." --ref-primary medium --base-rate 0.45 --base-rate-confidence medium --base-rate-reason "..." --up "factor|+5pp to +10pp" --down "factor|-3pp to -5pp" --reason "..."`.
+7. `sf why-wrong <id> -r "..." -r "..."` — at least one reverse-side reason (Card §10).
+8. `sf triggers <id> --up "..." --down "..." --next-review YYYY-MM-DD` — forward-looking triggers (Card §11).
+9. (Decision-shaped only) `sf decision <id> --pause-below 0.55 --test-between 0.55 0.70 --act-above 0.70 --reason "..."` — thresholds (Card §12).
+10. `sf render <id>` to produce the markdown card.
+11. Read the rendered card path back to the user and ask if anything should be
+    adjusted before activating.
 
 ### Mode 2: `update` — update an existing forecast
 

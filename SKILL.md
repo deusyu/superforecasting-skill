@@ -110,17 +110,43 @@ python3 {baseDir}/scripts/sf.py decompose <id> \
     -s "sub-question 1|0.65" \
     -s "sub-question 2|0.70"
 
-# Step 4: set current probability with reasoning
+# Step 4: set current probability with three-layer reference class + Fermi adjustments
 python3 {baseDir}/scripts/sf.py set-prob <id> \
     --p 0.62 --range 0.55 0.68 \
-    --reference-class "<primary reference class>" \
+    --ref-broad "<broad reference class>" \
+    --ref-medium "<medium reference class>" \
+    --ref-narrow "<narrow reference class>" \
+    --ref-primary medium \
     --base-rate 0.45 \
+    --base-rate-confidence medium \
+    --base-rate-reason "<why this base rate>" \
+    --up "<upward factor>|+5pp to +10pp" \
+    --down "<downward factor>|-3pp to -5pp" \
     --reason "<external + internal view summary>"
+# Legacy single --reference-class still works (treated as the medium layer).
 
-# Step 5: render the markdown forecast card
+# Step 5: record reverse-side reasons (Card section 10) — at least 1, ideally 2–3
+python3 {baseDir}/scripts/sf.py why-wrong <id> \
+    -r "<reason this forecast might be wrong>" \
+    -r "<another reason>"
+
+# Step 6: record forward-looking update triggers (Card section 11)
+python3 {baseDir}/scripts/sf.py triggers <id> \
+    --up "<what would push p higher>" \
+    --down "<what would push p lower>" \
+    --next-review YYYY-MM-DD
+
+# Step 7 (only for decision-shaped questions): record decision thresholds (Card section 12)
+python3 {baseDir}/scripts/sf.py decision <id> \
+    --pause-below 0.55 --test-between 0.55 0.70 --act-above 0.70 \
+    --reason "<cost / reversibility justification>"
+
+# Step 8: render the markdown forecast card
 python3 {baseDir}/scripts/sf.py render <id>
 # → ~/.superforecast/forecasts/rendered/<id>.md
 ```
+
+Steps 5 and 6 are mandatory for every forecast; skipping them leaves Card sections 10–11 blank and breaks the contract documented in §5. Step 7 is conditional — run it only when the question is decision-shaped ("should I", "is it worth doing"). For pure forecasts ("will X happen") leave section 12 empty.
 
 #### Mode `update`
 
@@ -146,7 +172,7 @@ Auto-computes Brier Score `(final_p - outcome)²`. After settlement, produce a o
 
 ```bash
 python3 {baseDir}/scripts/sf.py review --recent 20
-# → ~/.superforecast/reports/calibration_YYYYMMDD.md
+# → ~/.superforecast/reports/calibration_YYYYMMDD_NNN.md (NNN auto-increments per day)
 ```
 
 Read the report and translate it into 3–5 plain-language observations: average Brier, most miscalibrated band, fence-sitting rate, best/worst category, one concrete behavior change for next batch.
@@ -164,8 +190,6 @@ python3 {baseDir}/scripts/sf.py score <id>      # recompute Brier (read-only)
 ```
 ∅ ──forecast_created──▶ DRAFT ──question_scoped──▶ SCOPED
                                                      │
-                                          decomposed (side-branch, no state change)
-                                                     │
                                                      │ probability_set
                                                      ▼
                                                   ACTIVE ◀──┐
@@ -175,6 +199,15 @@ python3 {baseDir}/scripts/sf.py score <id>      # recompute Brier (read-only)
                                                      │ settled
                                                      ▼
                                                   SETTLED ──scored (auto)──▶ SCORED
+
+Side-branch events (no state change; allowed in SCOPED / ACTIVE / UPDATED):
+  decomposed           — Fermi sub-questions
+  why_wrong_set        — reverse-side reasons (Card section 10)
+  update_triggers_set  — forward-looking triggers + next review date (Card section 11)
+  decision_threshold_set — act/test/pause thresholds (Card section 12)
+
+Aggregate event (separate id namespace):
+  reviewed             — calibration review snapshot, id = review-YYYY-NNN
 ```
 
 The script rejects illegal transitions with a clear error message. Read the error — it usually means a step was skipped (e.g. trying to `update` before `set-prob`, or `scope` after `settle`).
